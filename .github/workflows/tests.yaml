@@ -140,22 +140,18 @@ jobs:
     steps:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v4
-      - name: "🔧 Install system dependencies and Python ${{ matrix.python-version }}"
+      - name: "🔧 Install system dependencies and Python ${{ env.PYTHON_VERSION }}"
         run: |
           echo "Updating package lists..."
           apt-get update -qq
-          echo "Adding deadsnakes PPA for Python ${{ env.PYTHON_VERSION }}..."
-          apt-get install -y --no-install-recommends software-properties-common
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update -qq
           echo "Installing Python ${{ env.PYTHON_VERSION }} and build dependencies..."
           apt-get install -y --no-install-recommends \
-                python${{ env.PYTHON_VERSION }} \
-                python${{ env.PYTHON_VERSION }}-dev \
-                python${{ env.PYTHON_VERSION }}-venv \
-                python3-pip \
-                g++ \
-                pkg-config
+            python${{ env.PYTHON_VERSION }} \
+            python${{ env.PYTHON_VERSION }}-dev \
+            python${{ env.PYTHON_VERSION }}-venv \
+            python3-pip \
+            g++ \
+            pkg-config
       - name: "🏗️ Set up virtual environment and install package"
         run: |
           echo "Creating virtual environment with Python ${{ matrix.python-version }}..."
