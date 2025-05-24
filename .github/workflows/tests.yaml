@@ -208,12 +208,13 @@ jobs:
             python3-pip \
             g++ \
             pkg-config \
-            software-properties-common \
-            gnupg
-          echo "Python version:"
-          python3 --version
-          echo "Pip version:"
-          python3 -m pip --version
+            dbus
+          echo "Starting DBus service (if available)..."
+          service dbus start || true
+          echo "Checking /etc/resolv.conf symlink..."
+          if [ ! -L /etc/resolv.conf ]; then
+              ln -sf /lib/systemd/systemd-resolved.service /etc/resolv.conf || true
+          fi
       - name: "🏗️ Set up virtual environment and install package"
         run: |
           echo "Creating virtual environment with Python ${{ matrix.python-version }}..."
