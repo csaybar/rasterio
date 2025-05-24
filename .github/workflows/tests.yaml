@@ -80,7 +80,7 @@ jobs:
             python${{ env.PYTHON_VERSION }} \
             python${{ env.PYTHON_VERSION }}-dev \
             python${{ env.PYTHON_VERSION }}-venv \
-            python3-pip \
+            python${{ env.PYTHON_VERSION }}-pip \
             g++ \
             pkg-config
       - name: "🏗️ Build wheel with NumPy ${{ env.NUMPY_BUILD_VERSION }}"
@@ -140,16 +140,16 @@ jobs:
     steps:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v4
-      - name: "🔧 Install system dependencies and Python ${{ env.PYTHON_VERSION }}"
+      - name: "🔧 Install system dependencies and Python ${{ matrix.python-version }}"
         run: |
           echo "Updating package lists..."
           apt-get update -qq
-          echo "Installing Python ${{ env.PYTHON_VERSION }} and build dependencies..."
+          echo "Installing Python ${{ matrix.python-version }} and build dependencies..."
           apt-get install -y --no-install-recommends \
-            python${{ env.PYTHON_VERSION }} \
-            python${{ env.PYTHON_VERSION }}-dev \
-            python${{ env.PYTHON_VERSION }}-venv \
-            python3-pip \
+            python${{ matrix.python-version }} \
+            python${{ matrix.python-version }}-dev \
+            python${{ matrix.python-version }}-venv \
+            python${{ matrix.python-version }}-pip \
             g++ \
             pkg-config
       - name: "🏗️ Set up virtual environment and install package"
