@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: linting
     timeout-minutes: 30
-    container: ghcr.io/osgeo/gdal:ubuntu-small-3.8.4
+    container: ghcr.io/osgeo/gdal:ubuntu-small-3.5.3
     env:
       DEBIAN_FRONTEND: noninteractive
       PYTHON_VERSION: '3.10'
