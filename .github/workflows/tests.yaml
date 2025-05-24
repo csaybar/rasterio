@@ -1,10 +1,30 @@
+# =============================================================================
+# Rasterio Comprehensive Test Suite
+# =============================================================================
+# This workflow provides comprehensive testing for the Rasterio geospatial library
+# across multiple Python versions, GDAL versions, and operating systems.
+#
+# Testing Strategy:
+# 1. Code Quality: Linting with pre-commit hooks
+# 2. NumPy Compatibility: Build with NumPy 2.x, test with 1.x (ABI compatibility)
+# 3. Cross-platform Docker Tests: Multiple GDAL/Python combinations on Ubuntu
+# 4. Conda Environment Tests: Native builds on macOS (Intel/Apple Silicon) and Ubuntu
+#
+# Triggers:
+# - Push/PR to GHcheck branch (with path filtering for efficiency)
+# - Weekly scheduled runs to catch ecosystem changes
+# =============================================================================
+
 name: Tests
 
-# When to run this workflow
+# =============================================================================
+# WORKFLOW TRIGGERS
+# =============================================================================
 on:
+  # Trigger on pushes to specific branches
+  # Path filtering ensures workflow only runs when relevant files change
   push:
     branches: [ GHcheck ]
-    # Trigger only when relevant files change
     paths:
       - '.github/workflows/tests.yaml'
       - 'requirements*.txt'
@@ -16,6 +36,7 @@ on:
       - 'rasterio/**'
       - 'tests/**'
 
+  # Trigger on pull requests to specific branches
   pull_request:
     branches: [ GHcheck ]
     paths:
@@ -29,156 +50,310 @@ on:
       - 'rasterio/**'
       - 'tests/**'
 
-  # Run weekly to catch bitrot / ecosystem changes
+  # Weekly scheduled runs every Sunday at midnight UTC
+  # This catches breaking changes in dependencies and the broader ecosystem
   schedule:
     - cron: '0 0 * * 0'
 
-# ------------------------------------------------------------
-# Linting using pre-commit
-# ------------------------------------------------------------
+  # Allow manual triggering from GitHub UI for debugging
+  workflow_dispatch:
+
+# =============================================================================
+# GLOBAL ENVIRONMENT VARIABLES
+# =============================================================================
+env:
+  # Ensure consistent behavior across different environments
+  PYTHONUNBUFFERED: 1
+  FORCE_COLOR: 1
+
+# =============================================================================
+# JOB DEFINITIONS
+# =============================================================================
 jobs:
+  # ===========================================================================
+  # JOB 1: CODE QUALITY AND LINTING
+  # ===========================================================================
+  # Purpose: Ensure code quality standards using pre-commit hooks
+  # - Runs on latest Ubuntu with Python 3.12
+  # - Uses pre-commit to run configured linting tools (black, flake8, etc.)
+  # - Acts as a gatekeeper for other jobs - they depend on this passing
+  # ===========================================================================
   linting:
+    name: "Code Quality & Linting"
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - name: "📥 Checkout repository"
+        uses: actions/checkout@v4
         with:
-          python-version: 3.12
+          # Fetch full history for pre-commit hooks that may need it
+          fetch-depth: 0
 
-      - name: Run pre-commit hooks
+      - name: "🐍 Set up Python 3.12"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: "🔍 Run pre-commit hooks"
         shell: bash
         run: |
+          echo "Installing pre-commit..."
           python -m pip install --upgrade pip
-          pip install pre-commit
-          pre-commit run --show-diff-on-failure --all-files
+          python -m pip install pre-commit
+          
+          echo "Running pre-commit hooks on all files..."
+          # Show diffs on failure to help with debugging
+          pre-commit run --show-diff-on-failure --color=always --all-files
 
-# ------------------------------------------------------------
-# Build with NumPy 2.x, Test with NumPy 1.x (ABI compatibility check)
-# ------------------------------------------------------------
+  # ===========================================================================
+  # JOB 2: NUMPY ABI COMPATIBILITY TEST
+  # ===========================================================================
+  # Purpose: Critical test for NumPy ABI compatibility
+  # - Build Rasterio with NumPy 2.0 (newer ABI)
+  # - Test with NumPy 1.24 (older ABI) 
+  # - Ensures users with older NumPy can use newer Rasterio wheels
+  # - Uses specific GDAL container for consistent geospatial environment
+  # ===========================================================================
   numpy_compat_test:
+    name: "NumPy ABI Compatibility Test"
     runs-on: ubuntu-latest
-    name: Build with NumPy 2.0, test with 1.24
-    container: ghcr.io/osgeo/gdal:ubuntu-small-${{ matrix.gdal-version }}
-    env:
-      DEBIAN_FRONTEND: noninteractive
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.10']
-        gdal-version: ['3.8.4']
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up system packages and Python ${{ matrix.python-version }}
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            software-properties-common \
-            python${{ matrix.python-version }} \
-            python${{ matrix.python-version }}-dev \
-            python${{ matrix.python-version }}-venv \
-            python3-pip \
-            g++
-
-      - name: Build wheel using NumPy 2.x
-        run: |
-          python${{ matrix.python-version }} -m venv testenv
-          source testenv/bin/activate
-          pip install --upgrade pip
-          pip install numpy==2.0.0 build
-          python -m build  # Create wheel from source
-
-      - name: Run tests using NumPy 1.x
-        run: |
-          source testenv/bin/activate
-          pip install numpy==1.24
-          pip install -r requirements-dev.txt
-          pip install dist/*.whl
-          pip install aiohttp boto3 fsspec hypothesis packaging pytest shapely
-          rm -rf rasterio  # Ensure tests run against installed wheel, not source
-          pytest -v -m "not wheel" -rxXs
-
-# ------------------------------------------------------------
-# Docker-based matrix: Test across GDAL versions and Python versions
-# ------------------------------------------------------------
-  docker_tests:
     needs: linting
-    runs-on: ubuntu-latest
-    name: Docker | GDAL=${{ matrix.gdal-version }} | python=${{ matrix.python-version }}
-    container: ghcr.io/osgeo/gdal:ubuntu-small-${{ matrix.gdal-version }}
+    timeout-minutes: 30
+    
+    # Use specific GDAL version for reproducible results
+    container: ghcr.io/osgeo/gdal:ubuntu-small-3.8.4
+    
     env:
       DEBIAN_FRONTEND: noninteractive
+      PYTHON_VERSION: '3.10'
+      NUMPY_BUILD_VERSION: '2.0.0'
+      NUMPY_TEST_VERSION: '1.24'
+    
+    steps:
+      - name: "📥 Checkout repository"
+        uses: actions/checkout@v4
+
+      - name: "🔧 Update package lists and add Python PPA"
+        run: |
+          echo "Updating package lists..."
+          apt-get update -qq
+          
+          echo "Installing software-properties-common..."
+          apt-get install -y --no-install-recommends software-properties-common
+          
+          echo "Adding deadsnakes PPA for Python versions..."
+          add-apt-repository -y ppa:deadsnakes/ppa
+          apt-get update -qq
+
+      - name: "🐍 Install Python ${{ env.PYTHON_VERSION }} and build tools"
+        run: |
+          echo "Installing Python ${{ env.PYTHON_VERSION }} and development dependencies..."
+          apt-get install -y --no-install-recommends \
+            python${{ env.PYTHON_VERSION }} \
+            python${{ env.PYTHON_VERSION }}-dev \
+            python${{ env.PYTHON_VERSION }}-venv \
+            python3-pip \
+            g++ \
+            pkg-config
+
+      - name: "🏗️ Build wheel with NumPy ${{ env.NUMPY_BUILD_VERSION }}"
+        run: |
+          echo "Creating build environment..."
+          python${{ env.PYTHON_VERSION }} -m venv testenv
+          source testenv/bin/activate
+          
+          echo "Upgrading pip and installing build dependencies..."
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install numpy==${{ env.NUMPY_BUILD_VERSION }} build cython
+          
+          echo "Building wheel from source..."
+          python -m build --wheel
+          
+          echo "Built wheels:"
+          ls -la dist/
+
+      - name: "🧪 Test with NumPy ${{ env.NUMPY_TEST_VERSION }}"
+        run: |
+          echo "Activating test environment..."
+          source testenv/bin/activate
+          
+          echo "Installing NumPy ${{ env.NUMPY_TEST_VERSION }} for testing..."
+          python -m pip install numpy==${{ env.NUMPY_TEST_VERSION }}
+          
+          echo "Installing development requirements..."
+          python -m pip wheel -r requirements-dev.txt
+          
+          echo "Installing built wheel..."
+          python -m pip install dist/*.whl
+          
+          echo "Installing additional test dependencies..."
+          python -m pip install aiohttp boto3 fsspec hypothesis packaging pytest shapely
+          
+          echo "Removing source directory to ensure testing against installed wheel..."
+          rm -rf rasterio
+          
+          echo "Running NumPy compatibility tests..."
+          python -m pytest -v -m "not wheel" -rxXs --tb=short
+
+  # ===========================================================================
+  # JOB 3: DOCKER-BASED MATRIX TESTS
+  # ===========================================================================
+  # Purpose: Comprehensive testing across GDAL and Python version combinations
+  # - Uses official GDAL Docker containers for consistent environments
+  # - Tests all supported Python versions (3.9-3.13)
+  # - Tests multiple GDAL versions for compatibility
+  # - Includes coverage reporting for code quality metrics
+  # ===========================================================================
+  docker_tests:
+    name: "Docker | GDAL=${{ matrix.gdal-version }} | Python=${{ matrix.python-version }}"
+    runs-on: ubuntu-latest
+    needs: linting
+    timeout-minutes: 45
+    
+    container: ghcr.io/osgeo/gdal:ubuntu-small-${{ matrix.gdal-version }}
+    
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    
     strategy:
+      # Don't cancel other jobs if one fails - we want to see all results
       fail-fast: false
       matrix:
+        # Primary test matrix: Latest GDAL with all supported Python versions
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
         gdal-version: ['3.9.3']
         include:
-          # Add more combinations
+          # Additional combinations for broader GDAL version coverage
+          # Use Python 3.12 with latest GDAL for cutting-edge compatibility
           - python-version: '3.12'
             gdal-version: 'latest'
+            enable_coverage: true  # Enable coverage for representative combination
+          
+          # Test older GDAL versions with Python 3.9 for backward compatibility
           - python-version: '3.9'
             gdal-version: '3.8.5'
           - python-version: '3.9'
             gdal-version: '3.7.3'
-          - python-version: '3.9'
+          - python-version: '3.9'  
             gdal-version: '3.6.4'
           - python-version: '3.9'
             gdal-version: '3.5.3'
-
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: "📥 Checkout repository"
+        uses: actions/checkout@v4
 
-      - name: Install Python ${{ matrix.python-version }} and dependencies
+      - name: "🔧 Update system and add Python PPA"
         run: |
-          apt-get update
+          echo "Updating package lists..."
+          apt-get update -qq
+          
+          echo "Installing software-properties-common..."
+          apt-get install -y --no-install-recommends software-properties-common
+          
+          echo "Adding deadsnakes PPA..."
+          add-apt-repository -y ppa:deadsnakes/ppa
+          apt-get update -qq
+
+      - name: "🐍 Install Python ${{ matrix.python-version }} and build tools"
+        run: |
+          echo "Installing Python ${{ matrix.python-version }} and build dependencies..."
           apt-get install -y --no-install-recommends \
-            software-properties-common \
             python${{ matrix.python-version }} \
             python${{ matrix.python-version }}-dev \
             python${{ matrix.python-version }}-venv \
             python3-pip \
-            g++
+            g++ \
+            pkg-config \
+            git
 
-      - name: Set up virtual environment and install test deps
+      - name: "🏗️ Set up virtual environment and install package"
         run: |
+          echo "Creating virtual environment with Python ${{ matrix.python-version }}..."
           python${{ matrix.python-version }} -m venv testenv
           source testenv/bin/activate
-          pip install --upgrade pip
-          pip install --no-deps --force-reinstall -e .[test]
+          
+          echo "Upgrading pip and core packages..."
+          python -m pip install --upgrade pip setuptools wheel
+          
+          echo "Installing Rasterio in development mode..."
+          # Force reinstall to ensure clean installation
+          python -m pip install --no-deps --force-reinstall -e .[test]
+          
+          echo "Environment info:"
+          python --version
+          pip --version
 
-      - name: Run pytest with coverage
+      - name: "🧪 Run tests"
         run: |
           source testenv/bin/activate
-          pip install -r requirements-dev.txt
-          pytest -v -m "not wheel" -rxXs --cov rasterio --cov-report term-missing
+          
+          echo "Installing development requirements..."
+          python -m pip install -r requirements-dev.txt
+          
+          if [ "${{ matrix.enable_coverage }}" = "true" ]; then
+            echo "Running tests with coverage reporting..."
+            python -m pytest -v -m "not wheel" -rxXs \
+              --cov=rasterio \
+              --cov-report=term-missing \
+              --cov-report=xml \
+              --tb=short
+          else
+            echo "Running tests without coverage..."
+            python -m pytest -v -m "not wheel" -rxXs \
+              --cov=rasterio \
+              --cov-report=term-missing \
+              --tb=short
+          fi
 
-# ------------------------------------------------------------
-# Conda-based tests on macOS and Linux (Mamba)
-# ------------------------------------------------------------
+      - name: "📊 Upload coverage to Codecov"
+        if: matrix.enable_coverage == true
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: docker-tests
+          name: docker-gdal-${{ matrix.gdal-version }}-py${{ matrix.python-version }}
+          fail_ci_if_error: false  # Don't fail CI if coverage upload fails
+
+  # ===========================================================================
+  # JOB 4: CONDA ENVIRONMENT TESTS
+  # ===========================================================================
+  # Purpose: Test in conda/mamba environments across different platforms
+  # - Tests on macOS (Intel + Apple Silicon) and Ubuntu
+  # - Uses micromamba for faster, more reliable environment setup
+  # - Validates against conda-forge ecosystem packages
+  # - Platform-specific test exclusions for known platform issues
+  # ===========================================================================
   conda_test:
-    needs: linting
-    name: Conda | ${{ matrix.os }} | python=${{ matrix.python-version }}
+    name: "Conda | ${{ matrix.os }} | Python ${{ matrix.python-version }}"
     runs-on: ${{ matrix.os }}
+    needs: linting
+    timeout-minutes: 45
+    
     strategy:
+      # Fail fast for conda tests since they're more likely to have environment issues
       fail-fast: true
       matrix:
-        os: [macos-13, macos-14]  # Intel and Apple Silicon
+        # Test different architectures and Python versions
+        os: [macos-13, macos-14]  # macos-13=Intel, macos-14=Apple Silicon
         python-version: ['3.9', '3.10', '3.11', '3.12']
         include:
+          # Add Ubuntu test with wildcard Python version (uses conda-forge default)
           - os: ubuntu-latest
             python-version: '*'
-
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: "📥 Checkout repository"
+        uses: actions/checkout@v4
 
-      - name: Set up Conda environment via micromamba
+      - name: "🐍 Setup Conda environment with micromamba"
         uses: mamba-org/setup-micromamba@v2
         with:
           init-shell: bash
           environment-name: test
+          # Create environment with core geospatial stack from conda-forge
           create-args: >-
             python=${{ matrix.python-version }}
             libgdal
@@ -186,27 +361,76 @@ jobs:
             cython=3
             numpy
 
-      - name: Install test dependencies (editable install)
+      - name: "📦 Install Rasterio and test dependencies"
         shell: bash -l {0}
         run: |
-          micromamba run -n test pip install -e . --no-use-pep517 || micromamba run -n test pip install -e .
-          micromamba run -n test pip install -r requirements-dev.txt
+          echo "Installing Rasterio in development mode..."
+          # Try without --no-use-pep517 first, fallback if needed
+          micromamba run -n test python -m pip install -e . --no-use-pep517 || \
+          micromamba run -n test python -m pip install -e .
+          
+          echo "Installing development requirements..."
+          micromamba run -n test python -m pip install -r requirements-dev.txt
 
-      - name: Log Python and environment info
+      - name: "🔍 Environment diagnostics"
         shell: bash -l {0}
         run: |
+          echo "Python version:"
           micromamba run -n test python -V
+          
+          echo "Micromamba environment info:"
           micromamba info
+          
+          echo "Installed packages:"
+          micromamba run -n test pip list | grep -E "(rasterio|gdal|numpy|geos)"
 
-      - name: Run tests with coverage (Ubuntu only)
+      - name: "🧪 Run tests (Ubuntu)"
         if: matrix.os == 'ubuntu-latest'
         shell: bash -l {0}
         run: |
-          micromamba run python -m pytest -v -m "not wheel" -rxXs --cov rasterio --cov-report term-missing -k "not issue2353"
+          echo "Running tests on Ubuntu..."
+          # Exclude known problematic test issue2353
+          micromamba run python -m pytest -v -m "not wheel" -rxXs \
+            --cov=rasterio \
+            --cov-report=term-missing \
+            -k "not issue2353" \
+            --tb=short
 
-      - name: Run tests with coverage (macOS only)
-        if: ${{ matrix.os == 'macos-13' || matrix.os == 'macos-14' }}
+      - name: "🧪 Run tests (macOS)"
+        # Use matrix condition syntax for multiple macOS versions
+        if: matrix.os == 'macos-13' || matrix.os == 'macos-14'
         shell: bash -l {0}
         run: |
-          micromamba run python -m pytest -v -m "not wheel" -rxXs --cov rasterio --cov-report term-missing \
-            -k "not test_target_aligned_pixels and not test_reproject_error_propagation and not test_outer_boundless_pixel_fidelity and not issue2353"
+          echo "Running tests on macOS (${{ matrix.os }})..."
+          # Exclude macOS-specific problematic tests along with issue2353
+          # These tests have known issues on macOS related to pixel alignment and reprojection
+          micromamba run python -m pytest -v -m "not wheel" -rxXs \
+            --cov=rasterio \
+            --cov-report=term-missing \
+            -k "not test_target_aligned_pixels and not test_reproject_error_propagation and not test_outer_boundless_pixel_fidelity and not issue2353" \
+            --tb=short
+
+# =============================================================================
+# WORKFLOW SUMMARY
+# =============================================================================
+# This workflow provides comprehensive testing coverage:
+#
+# 1. **Code Quality (linting)**: Ensures code standards with pre-commit hooks
+# 2. **NumPy Compatibility**: Verifies ABI compatibility between NumPy versions  
+# 3. **Docker Matrix**: Tests across Python 3.9-3.13 and GDAL 3.5-3.9+
+# 4. **Conda Environments**: Native testing on Ubuntu, macOS Intel, and Apple Silicon
+#
+# Key Features:
+# - Path-based triggering for efficiency
+# - Comprehensive error reporting with --tb=short
+# - Platform-specific test exclusions for known issues
+# - Coverage reporting for code quality metrics
+# - Timeout protection against hanging tests
+# - Dependency caching where possible
+#
+# Maintenance Notes:
+# - Update Python versions as new releases become available
+# - Update GDAL versions to test latest geospatial capabilities  
+# - Review and update excluded tests as issues are resolved
+# - Monitor test execution time and adjust timeouts if needed
+# =============================================================================
