@@ -1,8 +1,10 @@
 name: Tests
 
+# When to run this workflow
 on:
   push:
     branches: [ GHcheck ]
+    # Trigger only when relevant files change
     paths:
       - '.github/workflows/tests.yaml'
       - 'requirements*.txt'
@@ -13,6 +15,7 @@ on:
       - 'scripts/**'
       - 'rasterio/**'
       - 'tests/**'
+
   pull_request:
     branches: [ GHcheck ]
     paths:
@@ -25,29 +28,40 @@ on:
       - 'scripts/**'
       - 'rasterio/**'
       - 'tests/**'
-  schedule:
-    - cron:  '0 0 * * 0'
 
+  # Run weekly to catch bitrot / ecosystem changes
+  schedule:
+    - cron: '0 0 * * 0'
+
+# ------------------------------------------------------------
+# Linting using pre-commit
+# ------------------------------------------------------------
 jobs:
   linting:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
-            python-version: 3.12
-      - name: Code Linting
+          python-version: 3.12
+
+      - name: Run pre-commit hooks
         shell: bash
         run: |
-          python -m pip install pre-commit
+          python -m pip install --upgrade pip
+          pip install pre-commit
           pre-commit run --show-diff-on-failure --all-files
 
+# ------------------------------------------------------------
+# Build with NumPy 2.x, Test with NumPy 1.x (ABI compatibility check)
+# ------------------------------------------------------------
   numpy_compat_test:
     runs-on: ubuntu-latest
-    name: Build with Numpy 2.0.0, test with 1.24
+    name: Build with NumPy 2.0, test with 1.24
     container: ghcr.io/osgeo/gdal:ubuntu-small-${{ matrix.gdal-version }}
     env:
-        DEBIAN_FRONTEND: noninteractive
+      DEBIAN_FRONTEND: noninteractive
     strategy:
       fail-fast: false
       matrix:
@@ -56,50 +70,53 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Update
+
+      - name: Set up system packages and Python ${{ matrix.python-version }}
         run: |
           apt-get update
-          apt-get -y install software-properties-common
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update
-      - name: Set up Python ${{ matrix.python-version }}
-        run: |
           apt-get install -y --no-install-recommends \
+            software-properties-common \
             python${{ matrix.python-version }} \
             python${{ matrix.python-version }}-dev \
             python${{ matrix.python-version }}-venv \
             python3-pip \
             g++
-      - name: build wheel with Numpy 2
+
+      - name: Build wheel using NumPy 2.x
         run: |
           python${{ matrix.python-version }} -m venv testenv
-          . testenv/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install build
-          python -m build
-      - name: run tests with Numpy 1
-        run: |
-          . testenv/bin/activate
-          python -m pip install numpy==1.24
-          python -m pip wheel -r requirements-dev.txt
-          python -m pip install dist/*.whl
-          python -m pip install aiohttp boto3 fsspec hypothesis packaging pytest shapely
-          rm -rf rasterio
-          python -m pytest -v -m "not wheel" -rxXs
+          source testenv/bin/activate
+          pip install --upgrade pip
+          pip install numpy==2.0.0 build
+          python -m build  # Create wheel from source
 
+      - name: Run tests using NumPy 1.x
+        run: |
+          source testenv/bin/activate
+          pip install numpy==1.24
+          pip install -r requirements-dev.txt
+          pip install dist/*.whl
+          pip install aiohttp boto3 fsspec hypothesis packaging pytest shapely
+          rm -rf rasterio  # Ensure tests run against installed wheel, not source
+          pytest -v -m "not wheel" -rxXs
+
+# ------------------------------------------------------------
+# Docker-based matrix: Test across GDAL versions and Python versions
+# ------------------------------------------------------------
   docker_tests:
     needs: linting
     runs-on: ubuntu-latest
     name: Docker | GDAL=${{ matrix.gdal-version }} | python=${{ matrix.python-version }}
     container: ghcr.io/osgeo/gdal:ubuntu-small-${{ matrix.gdal-version }}
     env:
-        DEBIAN_FRONTEND: noninteractive
+      DEBIAN_FRONTEND: noninteractive
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
         gdal-version: ['3.9.3']
         include:
+          # Add more combinations
           - python-version: '3.12'
             gdal-version: 'latest'
           - python-version: '3.9'
@@ -114,35 +131,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Update
+      - name: Install Python ${{ matrix.python-version }} and dependencies
         run: |
           apt-get update
-          apt-get -y install software-properties-common
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: |
           apt-get install -y --no-install-recommends \
+            software-properties-common \
             python${{ matrix.python-version }} \
             python${{ matrix.python-version }}-dev \
             python${{ matrix.python-version }}-venv \
             python3-pip \
             g++
 
-      - name: Install dependencies
+      - name: Set up virtual environment and install test deps
         run: |
           python${{ matrix.python-version }} -m venv testenv
-          . testenv/bin/activate
-          python -m pip install --upgrade pip
-          python -m pip install --no-deps --force-reinstall -e .[test]
+          source testenv/bin/activate
+          pip install --upgrade pip
+          pip install --no-deps --force-reinstall -e .[test]
 
-      - name: run tests
+      - name: Run pytest with coverage
         run: |
-          . testenv/bin/activate
-          python -m pip install -r requirements-dev.txt
-          python -m pytest -v -m "not wheel" -rxXs --cov rasterio --cov-report term-missing
+          source testenv/bin/activate
+          pip install -r requirements-dev.txt
+          pytest -v -m "not wheel" -rxXs --cov rasterio --cov-report term-missing
 
+# ------------------------------------------------------------
+# Conda-based tests on macOS and Linux (Mamba)
+# ------------------------------------------------------------
   conda_test:
     needs: linting
     name: Conda | ${{ matrix.os }} | python=${{ matrix.python-version }}
@@ -150,9 +165,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        # macos-13 is OSX Intel
-        # macos-14 is OSX Arm64
-        os: [macos-13, macos-14]
+        os: [macos-13, macos-14]  # Intel and Apple Silicon
         python-version: ['3.9', '3.10', '3.11', '3.12']
         include:
           - os: ubuntu-latest
@@ -161,7 +174,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Conda
+      - name: Set up Conda environment via micromamba
         uses: mamba-org/setup-micromamba@v2
         with:
           init-shell: bash
@@ -173,26 +186,27 @@ jobs:
             cython=3
             numpy
 
-      - name: Install Env
+      - name: Install test dependencies (editable install)
         shell: bash -l {0}
         run: |
-          micromamba run -n test python -m pip install -e . --no-use-pep517 || micromamba run -n test python -m pip install -e .
-          micromamba run -n test python -m pip install -r requirements-dev.txt
+          micromamba run -n test pip install -e . --no-use-pep517 || micromamba run -n test pip install -e .
+          micromamba run -n test pip install -r requirements-dev.txt
 
-      - name: Check and Log Environment
+      - name: Log Python and environment info
         shell: bash -l {0}
         run: |
           micromamba run -n test python -V
           micromamba info
 
-      - name: Test with Coverage (Ubuntu)
+      - name: Run tests with coverage (Ubuntu only)
         if: matrix.os == 'ubuntu-latest'
         shell: bash -l {0}
         run: |
           micromamba run python -m pytest -v -m "not wheel" -rxXs --cov rasterio --cov-report term-missing -k "not issue2353"
 
-      - name: Test with Coverage (OSX)
-        if: "${{matrix.os}} == 'macos-13' || ${{matrix.os}} == 'macos-14'"
+      - name: Run tests with coverage (macOS only)
+        if: ${{ matrix.os == 'macos-13' || matrix.os == 'macos-14' }}
         shell: bash -l {0}
         run: |
-           micromamba run python -m pytest -v -m "not wheel" -rxXs  --cov rasterio --cov-report term-missing -k "not test_target_aligned_pixels and not test_reproject_error_propagation and not test_outer_boundless_pixel_fidelity and not issue2353"
+          micromamba run python -m pytest -v -m "not wheel" -rxXs --cov rasterio --cov-report term-missing \
+            -k "not test_target_aligned_pixels and not test_reproject_error_propagation and not test_outer_boundless_pixel_fidelity and not issue2353"
