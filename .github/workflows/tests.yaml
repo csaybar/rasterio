@@ -161,7 +161,7 @@ jobs:
       - name: "🏗️ Set up virtual environment and install package"
         run: |
           echo "Creating virtual environment with Python ${{ matrix.python-version }}..."
-          python${{ matrix.python-version }} -m venv testenv
+          python3 -m venv testenv
           . testenv/bin/activate
           echo "Upgrading pip and core packages..."
           python -m pip install --upgrade pip setuptools wheel
