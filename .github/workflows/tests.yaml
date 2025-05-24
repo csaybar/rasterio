@@ -144,8 +144,12 @@ jobs:
         run: |
           echo "Updating package lists..."
           apt-get update -qq
+          echo "Installing required packages for adding repositories..."
+          apt-get install -y --no-install-recommends \
+            software-properties-common \
+            gnupg-agent \
+            gnupg
           echo "Adding deadsnakes PPA for Python versions..."
-          apt-get install -y --no-install-recommends software-properties-common
           add-apt-repository ppa:deadsnakes/ppa -y
           apt-get update -qq
           echo "Installing Python ${{ env.PYTHON_VERSION }} and build dependencies..."
