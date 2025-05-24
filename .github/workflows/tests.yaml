@@ -135,21 +135,12 @@ jobs:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v4
 
-      - name: "🔧 Update package lists and add Python PPA"
+      - name: "🔧 Install system dependencies and Python ${{ env.PYTHON_VERSION }}"
         run: |
           echo "Updating package lists..."
           apt-get update -qq
           
-          echo "Installing software-properties-common..."
-          apt-get install -y --no-install-recommends software-properties-common
-          
-          echo "Adding deadsnakes PPA for Python versions..."
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update -qq
-
-      - name: "🐍 Install Python ${{ env.PYTHON_VERSION }} and build tools"
-        run: |
-          echo "Installing Python ${{ env.PYTHON_VERSION }} and development dependencies..."
+          echo "Installing Python ${{ env.PYTHON_VERSION }} and build dependencies..."
           apt-get install -y --no-install-recommends \
             python${{ env.PYTHON_VERSION }} \
             python${{ env.PYTHON_VERSION }}-dev \
@@ -245,20 +236,11 @@ jobs:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v4
 
-      - name: "🔧 Update system and add Python PPA"
+      - name: "🔧 Install system dependencies and Python ${{ matrix.python-version }}"
         run: |
           echo "Updating package lists..."
           apt-get update -qq
           
-          echo "Installing software-properties-common..."
-          apt-get install -y --no-install-recommends software-properties-common
-          
-          echo "Adding deadsnakes PPA..."
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update -qq
-
-      - name: "🐍 Install Python ${{ matrix.python-version }} and build tools"
-        run: |
           echo "Installing Python ${{ matrix.python-version }} and build dependencies..."
           apt-get install -y --no-install-recommends \
             python${{ matrix.python-version }} \
