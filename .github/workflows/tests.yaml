@@ -115,6 +115,10 @@ jobs:
       PYTHON_VERSION: '3.10'
       NUMPY_BUILD_VERSION: '2.2.6'
       NUMPY_TEST_VERSION: '1.24'
+      # Fix PROJ configuration
+      PROJ_LIB: /usr/share/proj
+      GDAL_DATA: /usr/share/gdal
+      PROJ_NETWORK: ON
     steps:
       - name: "📥 Checkout repository"
         uses: actions/checkout@v4
@@ -129,7 +133,16 @@ jobs:
             python3-venv \
             python3-pip \
             g++ \
-            pkg-config
+            pkg-config \
+            proj-data \
+            proj-bin \
+            libproj-dev \
+            ca-certificates \
+            curl
+          echo "Verifying PROJ installation..."
+          proj --version || echo "PROJ command not found"
+          echo "PROJ_LIB contents:"
+          ls -la /usr/share/proj/ || echo "PROJ_LIB directory not found"
       - name: "🏗️ Build wheel with NumPy ${{ env.NUMPY_BUILD_VERSION }}"
         run: |
           echo "Creating build environment..."
@@ -154,6 +167,19 @@ jobs:
           python -m pip install dist/*.whl
           echo "Installing additional test dependencies..."
           python -m pip install aiohttp boto3 fsspec hypothesis packaging pytest shapely
+          echo "Verifying PROJ configuration..."
+          python -c "
+                import os
+                print('PROJ_LIB:', os.environ.get('PROJ_LIB', 'Not set'))
+                print('GDAL_DATA:', os.environ.get('GDAL_DATA', 'Not set'))
+                try:
+                    import rasterio
+                    from rasterio.crs import CRS
+                    print('CRS creation test:', CRS.from_epsg(4326))
+                    print('PROJ network:', rasterio.env.default_env.options.get('PROJ_NETWORK', 'Not set'))
+                except Exception as e:
+                    print('Error:', e)
+          "
           echo "Removing source directory to ensure testing against installed wheel..."
           rm -rf rasterio
           echo "Running NumPy compatibility tests..."
@@ -178,6 +204,9 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
       GDAL_DATA: /usr/share/gdal
       PROJ_LIB: /usr/share/proj
+      PROJ_NETWORK: ON
+      # Disable problematic PROJ network calls if needed
+      PROJ_CURL_ENABLED: 'YES'
     strategy:
       fail-fast: false
       matrix:
@@ -208,13 +237,24 @@ jobs:
             python3-pip \
             g++ \
             pkg-config \
-            dbus
+            dbus \
+            proj-data \
+            proj-bin \
+            libproj-dev \
+            ca-certificates \
+            curl
           echo "Starting DBus service (if available)..."
           service dbus start || true
           echo "Checking /etc/resolv.conf symlink..."
           if [ ! -L /etc/resolv.conf ]; then
               ln -sf /lib/systemd/systemd-resolved.service /etc/resolv.conf || true
           fi
+          echo "Verifying PROJ installation..."
+          proj --version || echo "PROJ command not found"
+          echo "PROJ_LIB contents:"
+          ls -la /usr/share/proj/ || echo "PROJ_LIB directory not found"
+          echo "Verifying coordinate transformation capability..."
+          echo "-78.0 23.0" | proj +proj=utm +zone=18 +datum=WGS84 || echo "PROJ transformation test failed"
       - name: "🏗️ Set up virtual environment and install package"
         run: |
           echo "Creating virtual environment with Python ${{ matrix.python-version }}..."
@@ -227,6 +267,37 @@ jobs:
           echo "Environment info:"
           python --version
           pip --version
+      - name: "🔍 Verify geospatial environment"
+        run: |
+          . testenv/bin/activate
+          echo "Testing PROJ and GDAL integration..."
+          python -c "
+import os
+import rasterio
+from rasterio.crs import CRS
+from rasterio.warp import transform
+print('Environment variables:')
+print('  PROJ_LIB:', os.environ.get('PROJ_LIB', 'Not set'))
+print('  GDAL_DATA:', os.environ.get('GDAL_DATA', 'Not set'))
+print('  PROJ_NETWORK:', os.environ.get('PROJ_NETWORK', 'Not set'))
+
+print('\\nTesting CRS operations:')
+try:
+    crs = CRS.from_epsg(4326)
+    print('  WGS84 CRS creation: OK')
+    crs_utm = CRS.from_epsg(32618)
+    print('  UTM Zone 18N CRS creation: OK')
+except Exception as e:
+    print('  CRS creation failed:', e)
+
+print('\\nTesting coordinate transformation:')
+try:
+    xs, ys = transform(CRS.from_epsg(4326), CRS.from_epsg(32618), [-78.0], [23.0])
+    print(f'  Transform result: [{xs[0]:.2f}, {ys[0]:.2f}]')
+    print('  Coordinate transformation: OK')
+except Exception as e:
+    print('  Transformation failed:', e)
+"
       - name: "🧪 Run tests"
         run: |
           . testenv/bin/activate
@@ -291,6 +362,7 @@ jobs:
             geos=3.11
             cython=3
             numpy
+            proj-data
       - name: "📦 Install Rasterio and test dependencies"
         shell: bash -l {0}
         run: |
@@ -308,6 +380,19 @@ jobs:
           micromamba info
           echo "Installed packages:"
           micromamba run -n test pip list | grep -E "(rasterio|gdal|numpy|geos)"
+          echo "Testing geospatial environment:"
+          micromamba run -n test python -c "
+import os
+import rasterio
+from rasterio.crs import CRS
+print('PROJ_LIB:', os.environ.get('PROJ_LIB', 'Not set'))
+print('GDAL_DATA:', os.environ.get('GDAL_DATA', 'Not set'))
+try:
+    crs = CRS.from_epsg(4326)
+    print('CRS test: OK')
+except Exception as e:
+    print('CRS test failed:', e)
+"
       - name: "🧪 Run tests (Ubuntu)"
         if: matrix.os == 'ubuntu-latest'
         shell: bash -l {0}
